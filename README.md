@@ -15,11 +15,11 @@ Credentials for servers can be passed in on the command line or as the `P4EXP_CR
 ## Query Parameters
 
 
-| Parameter | Meaning                                             |
-| --------- | --------------------------------------------------- |
-| port      | address and port of the P4 server, i.e. server:1666 |
-| username  | username                                            |
-
+| Parameter  | Meaning                                                                  |
+| ---------- | ------------------------------------------------------------------------ |
+| port       | address and port of the P4 server, i.e. server:1666                      |
+| username   | username                                                                 |
+| collectors | command delimited list of optional collectors: users, workspaces, depots |
 
 ## Target configuration
 

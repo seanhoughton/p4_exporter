@@ -87,13 +87,18 @@ class P4Collector(object):
             return
         yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
         yield self.uptime(p4)
-        yield self.workspaces(p4)
-        yield self.users(p4)
         yield self.changelist(p4)
-        #depot_sizes, depot_counts, created_guage = self.depot_guages(p4)
-        #yield depot_sizes
-        #yield depot_counts
-        #yield created_guage
+
+        extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else []
+        if 'workspaces' in extra_collectors:
+            yield self.workspaces(p4)
+        if 'users' in extra_collectors:
+            yield self.users(p4)
+        if 'depots' in extra_collectors:
+            depot_sizes, depot_counts, created_guage = self.depot_guages(p4)
+            yield depot_sizes
+            yield depot_counts
+            yield created_guage
 
 
 if __name__ == '__main__':
