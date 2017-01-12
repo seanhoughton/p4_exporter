@@ -8,12 +8,10 @@ import logging
 from P4 import P4
 
 
-def debug(result):
-    for key in result:
-        print key, "=", result[key]
-
-
 class P4Collector(object):
+
+    def __init__(self):
+        self.__cache = {}
 
     def name(self, name):
         return 'p4_' + name
@@ -52,12 +50,18 @@ class P4Collector(object):
             created_guage.add_metric([depot_name, depot_type], int(depot['time']))
         return size_guage, count_guage, created_guage
 
-    def collect(self):
+    def collect(self, params):
+        if not params:
+            return
         p4 = P4()
+        p4.port = params['port'][0]
+        p4.user = params['username'][0]
+        p4.password = params['password'][0]
         try:
             start_time = time.time()
-            logging.debug('Connecting...')
+            logging.debug('Connecting to %s@%s...', params['username'][0], params['port'][0])
             p4.connect()
+            p4.run_login()
             logging.debug('Conected.')
             connect_time = time.time() - start_time
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
@@ -79,7 +83,7 @@ class P4Collector(object):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=False, help='Enable verbose logging')
-    parser.add_argument('-p', '--port', dest='port', type=int, default=8666, help='The port to expose metrics on, default: 8666')
+    parser.add_argument('-p', '--port', dest='port', type=int, default=9666, help='The port to expose metrics on, default: 9666')
     options = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
     logging.info('Creating collector...')

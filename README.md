@@ -1,16 +1,20 @@
 # Perforce exporter for Prometheus
 
-Exports basic information about a remote Perforce server on port 8666
+Exports basic information about a remote Perforce server on port 9666. 
 
-    http://localhost:8666/metrics
+    http://localhost:9666/metrics?port=perforce:1666&username=myuser&password=mypass
 
-## Configuration
 
-Configuration is done through traditional Perforce mechanisms. You can either
-use environment variables or a local `.p4config` file
+## Query Parameters
 
-| Variable | Meaning                                                       |
-| -------- | ------------------------------------------------------------- |
-| P4PORT   | Required: address and port of the P4 server, i.e. server:1666 |
-| P4USER   | Required: username                                            |
-| P4PASSWD | Required: password or token                                   |
+
+| Parameter | Meaning                                             |
+| --------- | --------------------------------------------------- |
+| port      | address and port of the P4 server, i.e. server:1666 |
+| username  | username                                            |
+| password  | password or token                                   |
+
+
+## Target configuration
+
+
