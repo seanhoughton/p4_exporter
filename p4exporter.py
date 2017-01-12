@@ -1,7 +1,10 @@
+#!/usr/bin/env python
+
 from argparse import ArgumentParser
 from prometheus_client import start_http_server
 from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily, REGISTRY
 import time
+import logging
 from P4 import P4
 
 
@@ -53,10 +56,13 @@ class P4Collector(object):
         p4 = P4()
         try:
             start_time = time.time()
+            logging.debug('Connecting...')
             p4.connect()
+            logging.debug('Conected.')
             connect_time = time.time() - start_time
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
-        except:
+        except Exception as e:
+            logging.error('Failed to connect: %s', e)
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
             return
         yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
@@ -72,9 +78,13 @@ class P4Collector(object):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    #parser.add_argument('--spec', dest='specs', action='append', help='Filespec for detailed stats')
+    parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=False, help='Enable verbose logging')
+    parser.add_argument('-p', '--port', dest='port', type=int, default=8666, help='The port to expose metrics on, default: 8666')
     options = parser.parse_args()
+    logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
+    logging.info('Creating collector...')
     REGISTRY.register(P4Collector())
-    start_http_server(8666)
+    logging.info('Listening on port :%d...', options.port)
+    start_http_server(options.port)
     while True:
         time.sleep(5)
