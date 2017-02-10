@@ -69,7 +69,7 @@ class P4Collector(object):
         if not params:
             return
         p4 = P4()
-        p4port = params['port'][0]
+        p4port = params['target'][0]
         hostname, port = p4port.split(':')
         credentials = self.config['credentials'].get(p4port, None)
         if not credentials:
