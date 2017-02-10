@@ -54,7 +54,7 @@ class P4Collector(object):
     def depot_guages(self, p4):
         size_guage = GaugeMetricFamily(self.name('depot_size'), 'Size of a depot in bytes', labels=['depot', 'type'])
         count_guage = GaugeMetricFamily(self.name('depot_files'), 'Number of files in a depot', labels=['depot', 'type'])
-        created_guage = GaugeMetricFamily(self.name('depot_files'), 'Number of files in a depot', labels=['depot', 'type'])
+        created_guage = GaugeMetricFamily(self.name('depot_created'), 'Creation time of the depot', labels=['depot', 'type'])
         depots = p4.run(['depots'])
         for depot in depots:
             depot_name = depot['name']
@@ -76,8 +76,8 @@ class P4Collector(object):
             logging.error('No credentials for %s', p4port)
             return
         p4.user = credentials['username']
-        p4.port = p4port
         p4.password = credentials['password']
+        p4.port = p4port
         try:
             start_time = time.time()
             logging.info('Connecting to %s...', p4port)
