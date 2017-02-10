@@ -7,7 +7,7 @@ Exports basic information about a remote Perforce server on port 9666.
 
 ## Authentication/Credentials
 
-Credentials are set up in the config file located at /etc/p4exporter/conf.yml.
+Credentials are set up in the config file located at /etc/p4_exporter/conf.yml.
 
 	credentials:
 	  perforce1.mydomain.com:1666:

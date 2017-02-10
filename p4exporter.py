@@ -113,10 +113,9 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=True, help='Enable verbose logging')
     parser.add_argument('-p', '--port', dest='port', type=int, default=9666, help='The port to expose metrics on, default: 9666')
-    parser.add_argument('-c', '--config', dest='config', default='/etc/p4-exporter/p4-exporter.yml', help='Path to the configuration file')
+    parser.add_argument('-c', '--config', dest='config', default='/etc/p4_exporter/conf.yml', help='Path to the configuration file')
     options = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
-    logging.debug('WTF')
     logging.info('Creating collector...')
     config = yaml.load(open(options.config, 'r')) if os.path.isfile(options.config) else {}
     REGISTRY.register(P4Collector(config))
