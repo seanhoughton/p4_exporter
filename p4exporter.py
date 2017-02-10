@@ -80,7 +80,7 @@ class P4Collector(object):
         p4.password = credentials['password']
         try:
             start_time = time.time()
-            logging.info('Connecting to %s...', params['port'][0])
+            logging.info('Connecting to %s...', p4port)
             p4.connect()
             p4.run_login()
             logging.debug('Conected.')
