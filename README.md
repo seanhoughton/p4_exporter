@@ -2,25 +2,34 @@
 
 Exports basic information about a remote Perforce server on port 9666. 
 
-    http://localhost:9666/metrics?port=perforce:1666&username=myuser
+    http://localhost:9666/metrics?target=perforce:1666&collectors=users,workspaces,depots
 
 
 ## Authentication/Credentials
 
-Credentials for servers can be passed in on the command line or as the `P4EXP_CREDENTIALS` environment variable. A credential must exist for all queried servers.
+Credentials are set up in the config file located at /etc/p4exporter/conf.yml.
 
-    p4exporter.py -c foo:bar@perforce1,jar:car@perforce2
+	credentials:
+	  perforce1.mydomain.com:1666:
+	    username: user1
+	    password: mybirthday
+	  perforce2.mydomain.com:1666:
+	    username: user2
+	    password: mypetsname
+
+
+## Collectors
+
+| Collector   | Data                                            |
+| ---------   | ----------------------------------------------- |
+| users       | Aggregate data about users                      |
+| workspaces  | Aggregate data about workspaces                 |
+| depots      | Information for each depot about size and usage |
 
 
 ## Query Parameters
 
-
-| Parameter  | Meaning                                                                  |
-| ---------- | ------------------------------------------------------------------------ |
-| port       | address and port of the P4 server, i.e. server:1666                      |
-| username   | username                                                                 |
-| collectors | command delimited list of optional collectors: users, workspaces, depots |
-
-## Target configuration
-
-
+| Parameter  | Meaning                                               |
+| ---------- | ----------------------------------------------------- |
+| target     | address and port of the P4 server, i.e. server:1666   |
+| collectors | command delimited list of optional collectors         |

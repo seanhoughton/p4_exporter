@@ -1,11 +1,15 @@
-FROM        python:2.7
+FROM        python:3.3
 MAINTAINER  Sean Houghton <sean.houghton@activision.com>
 
 COPY        requirements.txt /tmp/requirements.txt
 RUN         pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
+COPY        docker-entrypoint.sh /docker-entrypoint.sh
+RUN         chmod +x /docker-entrypoint.sh
+
 COPY        p4exporter.py /usr/local/bin/p4exporter.py
 RUN         chmod +x /usr/local/bin/p4exporter.py
+COPY        conf.yml /etc/p4exporter/conf.yml
 
-EXPOSE      8666
-ENTRYPOINT  ["/usr/local/bin/p4exporter.py"]
+EXPOSE      9666
+ENTRYPOINT  ["/docker-entrypoint.sh"]

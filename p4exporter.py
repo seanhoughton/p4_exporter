@@ -2,6 +2,7 @@
 
 import os
 import re
+import yaml
 from argparse import ArgumentParser
 from prometheus_client import start_http_server
 from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily, REGISTRY
@@ -10,24 +11,15 @@ import logging
 from P4 import P4
 
 
-CREDENTIAL_REGEX = r'(?P<username>.+)\:(?P<password>.+)\@(?P<hostname>.+)'
-
-
 class P4Collector(object):
 
-    def __init__(self, credentials):
-        parsed_credentials = [re.match(CREDENTIAL_REGEX, c).groupdict() for c in credentials.split(',')]
-        self.credentials = {self.credential_key(c['hostname'], c['username']): c['password'] for c in parsed_credentials}
-        logging.info("Loaded %d credential", len(self.credentials))
-
-    def credential_key(self, hostname, username):
-        return '%s-%s' % (username, hostname)
+    def __init__(self, config):
+        self.config = config
 
     def name(self, name):
         return 'p4_' + name
 
-    def uptime(self, p4):
-        info = p4.run("info")[0]
+    def uptime(self, info):
         values = info['serverUptime'].split(':')
         uptime = int(values[0]) * 3600 + int(values[1]) * 60 + int(values[2])
         family = CounterMetricFamily(self.name('uptime'), 'Uptime in seconds for the server process', labels=[])
@@ -45,6 +37,19 @@ class P4Collector(object):
     def users(self, p4):
         users = p4.run('users')
         return GaugeMetricFamily(self.name('users'), 'Number of active users', value=len(users))
+
+    def replication(self, p4):
+        try:
+            pull = p4.run(['pull', '-lj']).pop()
+            yield CounterMetricFamily(self.name('pull_replica_journal_sequence'), 'Replica journal sequence', value=float(pull['replicaJournalSequence']))
+            yield CounterMetricFamily(self.name('pull_replica_journal_counter'), 'Replica journal counter', value=float(pull['replicaJournalCounter']))
+            yield CounterMetricFamily(self.name('pull_replica_journal_number'), 'Replica journal number', value=float(pull['replicaJournalNumber']))
+            yield CounterMetricFamily(self.name('pull_master_journal_sequence'), 'Master journal sequence', value=float(pull['masterJournalSequence']))
+            yield CounterMetricFamily(self.name('pull_master_journal_number'), 'Master journal number', value=float(pull['masterJournalNumber']))
+            yield CounterMetricFamily(self.name('pull_replica_time'), 'Replica Timestamp', value=float(pull['replicaTime']))
+            yield CounterMetricFamily(self.name('pull_replica_statefile_modified'), 'Replica statefile modified timestamp', value=float(pull['replicaStatefileModified']))
+        except Exception as e:
+            logging.error('Failed to get replication stats: %s', e)
 
     def depot_guages(self, p4):
         size_guage = GaugeMetricFamily(self.name('depot_size'), 'Size of a depot in bytes', labels=['depot', 'type'])
@@ -64,18 +69,18 @@ class P4Collector(object):
         if not params:
             return
         p4 = P4()
-        hostname, port = params['port'][0].split(':')
-        username = params['username'][0]
-        p4.user = username
-        p4.port = params['port'][0]
-        credential_key = self.credential_key(hostname, username)
-        if credential_key not in self.credentials:
-            logging.error('No credentials for %s@%s', username, hostname)
+        p4port = params['port'][0]
+        hostname, port = p4port.split(':')
+        credentials = self.config['credentials'].get(p4port, None)
+        if not credentials:
+            logging.error('No credentials for %s', p4port)
             return
-        p4.password = self.credentials[credential_key]
+        p4.user = credentials['username']
+        p4.port = p4port
+        p4.password = credentials['password']
         try:
             start_time = time.time()
-            logging.debug('Connecting to %s@%s...', params['username'][0], params['port'][0])
+            logging.info('Connecting to %s...', params['port'][0])
             p4.connect()
             p4.run_login()
             logging.debug('Conected.')
@@ -85,9 +90,12 @@ class P4Collector(object):
             logging.error('Failed to connect: %s', e)
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
             return
+        info = p4.run("info")[0]
         yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
-        yield self.uptime(p4)
+        yield self.uptime(info)
         yield self.changelist(p4)
+        if info['serverServices'] in ('replica', 'forwarding-replica', 'edge-server'):
+            yield from self.replication(p4)
 
         extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else []
         if 'workspaces' in extra_collectors:
@@ -103,13 +111,15 @@ class P4Collector(object):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=False, help='Enable verbose logging')
+    parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=True, help='Enable verbose logging')
     parser.add_argument('-p', '--port', dest='port', type=int, default=9666, help='The port to expose metrics on, default: 9666')
-    parser.add_argument('-c', '--credentials', dest='credentials', default=os.environ.get('P4EXP_CREDENTIALS', ''), help='A command delimited set of credentials in <username>:<password>@<hostname> format.')
+    parser.add_argument('-c', '--config', dest='config', default='/etc/p4-exporter/p4-exporter.yml', help='Path to the configuration file')
     options = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
+    logging.debug('WTF')
     logging.info('Creating collector...')
-    REGISTRY.register(P4Collector(options.credentials))
+    config = yaml.load(open(options.config, 'r'))
+    REGISTRY.register(P4Collector(config))
     logging.info('Listening on port :%d...', options.port)
     start_http_server(options.port)
     while True:
