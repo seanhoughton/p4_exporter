@@ -9,7 +9,6 @@ RUN         chmod +x /docker-entrypoint.sh
 
 COPY        p4exporter.py /usr/local/bin/p4exporter.py
 RUN         chmod +x /usr/local/bin/p4exporter.py
-COPY        conf.yml /etc/p4exporter/conf.yml
 
 EXPOSE      9666
 ENTRYPOINT  ["/docker-entrypoint.sh"]

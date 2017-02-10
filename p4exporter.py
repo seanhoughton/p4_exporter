@@ -118,7 +118,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
     logging.debug('WTF')
     logging.info('Creating collector...')
-    config = yaml.load(open(options.config, 'r'))
+    config = yaml.load(open(options.config, 'r')) if os.path.isfile(options.config) else {}
     REGISTRY.register(P4Collector(config))
     logging.info('Listening on port :%d...', options.port)
     start_http_server(options.port)
