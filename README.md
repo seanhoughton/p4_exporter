@@ -20,11 +20,12 @@ Credentials are set up in the config file located at /etc/p4_exporter/conf.yml.
 
 ## Collectors
 
-| Collector   | Data                                            |
-| ---------   | ----------------------------------------------- |
-| users       | Aggregate data about users                      |
-| workspaces  | Aggregate data about workspaces                 |
-| depots      | Information for each depot about size and usage |
+| Collector   | Data                                              |
+| ---------   | ------------------------------------------------- |
+| users       | Aggregate data about users                        |
+| workspaces  | Aggregate data about workspaces                   |
+| depots      | Information for each depot about size and usage   |
+| replication | Aggregate data about journal and file replication |
 
 
 ## Query Parameters
