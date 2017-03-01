@@ -106,6 +106,7 @@ class P4Collector(object):
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
             return
 
+        yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
         yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
 
         if not credentials:
@@ -116,10 +117,8 @@ class P4Collector(object):
             logging.debug('Logging in...')
             p4.run_login()
             logging.debug('Conected and logged in.')
-            yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
         except Exception as e:
             logging.error('Failed to log in to %s: %s', p4port, e)
-            yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
             return
 
         info = p4.run("info")[0]
