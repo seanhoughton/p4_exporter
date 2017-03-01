@@ -91,27 +91,38 @@ class P4Collector(object):
         p4port = params['target'][0]
         hostname, port = p4port.split(':')
         credentials = self.config['credentials'].get(p4port, None)
-        if not credentials:
-            logging.error('No credentials for %s', p4port)
-            return
-        p4.user = credentials['username']
-        p4.password = credentials['password']
+        if credentials:
+            p4.user = credentials['username']
+            p4.password = credentials['password']
         p4.port = p4port
+
         try:
-            start_time = time.time()
             logging.info('Connecting to %s...', p4port)
+            start_time = time.time()
             p4.connect()
+            connect_time = time.time() - start_time
+        except Exception as e:
+            logging.error('Failed to connect to %s: %s', p4port, e)
+            yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
+            return
+
+        yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
+
+        if not credentials:
+            logging.warning('No credentials for %s', p4port)
+            return
+
+        try:
             logging.debug('Logging in...')
             p4.run_login()
             logging.debug('Conected and logged in.')
-            connect_time = time.time() - start_time
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
         except Exception as e:
-            logging.error('Failed to connect: %s', e)
+            logging.error('Failed to log in to %s: %s', p4port, e)
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
             return
+
         info = p4.run("info")[0]
-        yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
         yield self.uptime(info)
         yield self.changelist(p4)
 
