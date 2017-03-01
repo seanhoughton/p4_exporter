@@ -90,7 +90,7 @@ class P4Collector(object):
         p4.exception_level = 1
         p4port = params['target'][0]
         hostname, port = p4port.split(':')
-        credentials = self.config['credentials'].get(p4port, None)
+        credentials = self.config.get('credentials', {}).get(p4port, None)
         if credentials:
             p4.user = credentials['username']
             p4.password = credentials['password']
