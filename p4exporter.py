@@ -151,7 +151,11 @@ if __name__ == '__main__':
     options = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
     logging.info('Creating collector...')
-    config = yaml.load(open(options.config, 'r')) if os.path.isfile(options.config) else {}
+    if os.path.isfile(options.config):
+        config = yaml.load(open(options.config, 'r'))
+    else:
+        logging.warning("Config file %s does not exist, no credentials loaded.", options.config)
+        config = {}
     REGISTRY.register(P4Collector(config))
     logging.info('Listening on port :%d...', options.port)
     start_http_server(options.port)
