@@ -11,6 +11,15 @@ import logging
 from P4 import P4
 from socketserver import ThreadingMixIn
 
+COMMAND_STATES = {
+    'R': 'running',
+    'T': 'terminated',
+    'P': 'paused',
+    'B': 'background',
+    'F': 'finished',
+    'I': 'idle'
+}
+
 
 class P4Collector(object):
 
@@ -26,6 +35,35 @@ class P4Collector(object):
         family = CounterMetricFamily(self.name('uptime'), 'Uptime in seconds for the server process', labels=[])
         family.add_metric([], uptime)
         return family
+
+    def monitor(self, p4):
+        def time_to_seconds(time_string):
+            h, m, s = time_string.split(':')
+            return int(h) * 3600 + int(m) * 60 + int(s)
+        logging.debug('Inspecting processes')
+        try:
+            commands = p4.run_monitor('show')
+            for code, state in COMMAND_STATES.items():
+                cur_commands = [command for command in commands if command['status'] == code]
+                yield GaugeMetricFamily(name=self.name('commands_{}_count'.format(state)),
+                                        documentation='Number of commands in the {} state'.format(state),
+                                        value=len(cur_commands))
+                yield GaugeMetricFamily(name=self.name('commands_{}_users'.format(state)),
+                                        documentation='Number of users running commands in the {} state'.format(state),
+                                        value=len(set([item['user'] for item in cur_commands])))
+                if cur_commands:
+                    times = [time_to_seconds(command['time']) for command in cur_commands]
+                    yield GaugeMetricFamily(name=self.name('commands_{}_time_min'.format(state)),
+                                            documentation='Minimum time for commands in the {} state'.format(state),
+                                            value=min(times))
+                    yield GaugeMetricFamily(name=self.name('commands_{}_time_max'.format(state)),
+                                            documentation='Maximum time for commands in the {} state'.format(state),
+                                            value=max(times))
+                    yield GaugeMetricFamily(name=self.name('commands_{}_time_agv'.format(state)),
+                                            documentation='Average time for commands in the {} state'.format(state),
+                                            value=float(sum(times)) / float(len(times)))
+        except Exception as e:
+            logging.error('Failed to get monitor stats: %s', e)
 
     def changelist(self, p4):
         logging.debug('Inspecting changelist...')
@@ -123,8 +161,9 @@ class P4Collector(object):
                 return
 
             info = p4.run_info()[0]
-            yield self.uptime(info)
-            yield self.changelist(p4)
+        yield self.uptime(info)
+        yield from self.monitor(p4)
+        yield self.changelist(p4)
 
             extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else set()
             if 'replication' in extra_collectors:
