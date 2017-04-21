@@ -161,9 +161,9 @@ class P4Collector(object):
                 return
 
             info = p4.run_info()[0]
-        yield self.uptime(info)
-        yield from self.monitor(p4)
-        yield self.changelist(p4)
+            yield self.uptime(info)
+            yield from self.monitor(p4)
+            yield self.changelist(p4)
 
             extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else set()
             if 'replication' in extra_collectors:
