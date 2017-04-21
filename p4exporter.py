@@ -59,7 +59,7 @@ class P4Collector(object):
                     yield GaugeMetricFamily(name=self.name('commands_{}_time_max'.format(state)),
                                             documentation='Maximum time for commands in the {} state'.format(state),
                                             value=max(times))
-                    yield GaugeMetricFamily(name=self.name('commands_{}_time_agv'.format(state)),
+                    yield GaugeMetricFamily(name=self.name('commands_{}_time_avg'.format(state)),
                                             documentation='Average time for commands in the {} state'.format(state),
                                             value=float(sum(times)) / float(len(times)))
         except Exception as e:
