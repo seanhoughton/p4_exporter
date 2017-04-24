@@ -8,8 +8,11 @@ from wsgiref.simple_server import make_server, WSGIServer
 from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily, REGISTRY
 import time
 import logging
+import threading
 from P4 import P4
+from collections import defaultdict
 from socketserver import ThreadingMixIn
+
 
 COMMAND_STATES = {
     'R': 'running',
@@ -25,6 +28,31 @@ class P4Collector(object):
 
     def __init__(self, config):
         self.config = config
+        self.p4_pool = defaultdict(dict)
+
+    def connection(self, p4port):
+        tid = threading.current_thread().ident
+        if p4port not in self.p4_pool or tid not in self.p4_pool[p4port]:
+            p4 = P4()
+            p4.exception_level = 1
+            hostname, port = p4port.split(':')
+            credentials = self.config.get('credentials', {}).get(p4port, None)
+            if credentials:
+                p4.user = credentials['username']
+                p4.password = credentials['password']
+            else:
+                logging.warning('No credentials for %s', p4port)
+            p4.port = p4port
+            try:
+                logging.info('Connecting to %s...', p4port)
+                p4.connect()
+                self.p4_pool[p4port][tid] = (p4, credentials is not None)
+            except Exception as e:
+                logging.error('Failed to connect to %s: %s', p4port, e)
+                return None, False
+        else:
+            logging.debug('Using cached connection for %s/%s', p4port, tid)
+        return self.p4_pool[p4port][tid]
 
     def name(self, name):
         return 'p4_' + name
@@ -125,61 +153,57 @@ class P4Collector(object):
     def collect(self, params):
         if not params:
             return
-        with P4() as p4:
-            p4.exception_level = 1
-            p4port = params['target'][0]
-            hostname, port = p4port.split(':')
-            credentials = self.config.get('credentials', {}).get(p4port, None)
-            if credentials:
-                p4.user = credentials['username']
-                p4.password = credentials['password']
-            p4.port = p4port
+        p4port = params['target'][0]
+        p4, is_logged_in = self.connection(p4port)
+        if not p4:
+            yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
+            return
 
+        if not p4.connected():
             try:
-                logging.info('Connecting to %s...', p4port)
-                start_time = time.time()
                 p4.connect()
-                connect_time = time.time() - start_time
             except Exception as e:
-                logging.error('Failed to connect to %s: %s', p4port, e)
+                logging.info('Failed to re-connect an existing connection')
                 yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
                 return
 
-            yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
-            yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
+        yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
 
-            if not credentials:
-                logging.warning('No credentials for %s', p4port)
-                return
+        if not is_logged_in:
+            return
 
-            try:
-                logging.debug('Logging in...')
-                p4.run_login()
-                logging.debug('Conected and logged in.')
-            except Exception as e:
-                logging.error('Failed to log in to %s: %s', p4port, e)
-                return
+        try:
+            logging.debug('Logging in...')
+            p4.run_login()
+            logging.debug('Conected and logged in.')
+        except Exception as e:
+            logging.error('Failed to log in to %s: %s', p4port, e)
+            return
 
-            info = p4.run_info()[0]
-            yield self.uptime(info)
-            yield from self.monitor(p4)
-            yield self.changelist(p4)
+        start_time = time.time()
+        info = p4.run_info()[0]
+        connect_time = time.time() - start_time
+        yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
+        yield self.uptime(info)
 
-            extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else set()
-            if 'replication' in extra_collectors:
-                if info['serverServices'] in ('replica', 'forwarding-replica', 'edge-server'):
-                    yield from self.journal_replication(p4)
-                if 'lbr.replication' in info and info['lbr.replication'] != 'shared':
-                    yield from self.file_replication(p4)
-            if 'workspaces' in extra_collectors:
-                yield self.workspaces(p4)
-            if 'users' in extra_collectors:
-                yield self.users(p4)
-            if 'depots' in extra_collectors:
-                depot_sizes, depot_counts, created_guage = self.depot_guages(p4)
-                yield depot_sizes
-                yield depot_counts
-                yield created_guage
+        yield from self.monitor(p4)
+        yield self.changelist(p4)
+
+        extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else set()
+        if 'replication' in extra_collectors:
+            if info['serverServices'] in ('replica', 'forwarding-replica', 'edge-server'):
+                yield from self.journal_replication(p4)
+            if 'lbr.replication' in info and info['lbr.replication'] != 'shared':
+                yield from self.file_replication(p4)
+        if 'workspaces' in extra_collectors:
+            yield self.workspaces(p4)
+        if 'users' in extra_collectors:
+            yield self.users(p4)
+        if 'depots' in extra_collectors:
+            depot_sizes, depot_counts, created_guage = self.depot_guages(p4)
+            yield depot_sizes
+            yield depot_counts
+            yield created_guage
 
 
 class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
