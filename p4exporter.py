@@ -182,8 +182,8 @@ class P4Collector(object):
 
         start_time = time.time()
         info = p4.run_info()[0]
-        connect_time = time.time() - start_time
-        yield GaugeMetricFamily(self.name('connect_time'), 'Seconds to establish a connection', value=connect_time)
+        info_time = time.time() - start_time
+        yield GaugeMetricFamily(self.name('response_time'), 'Seconds to get p4 info', value=info_time)
         yield self.uptime(info)
 
         yield from self.monitor(p4)
