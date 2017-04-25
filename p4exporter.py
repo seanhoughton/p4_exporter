@@ -46,6 +46,14 @@ class P4Collector(object):
             try:
                 logging.info('Connecting to %s...', p4port)
                 p4.connect()
+                if credentials:
+                    try:
+                        logging.debug('Logging in as to "%s@%s"...', p4port, p4.user)
+                        p4.run_login()
+                        logging.debug('Conected and logged in.')
+                    except Exception as e:
+                        logging.error('Failed to log in to %s: %s', p4port, e)
+                        credentials = None
                 self.p4_pool[p4port][tid] = (p4, credentials is not None)
             except Exception as e:
                 logging.error('Failed to connect to %s: %s', p4port, e)
@@ -170,14 +178,6 @@ class P4Collector(object):
         yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
 
         if not is_logged_in:
-            return
-
-        try:
-            logging.debug('Logging in...')
-            p4.run_login()
-            logging.debug('Conected and logged in.')
-        except Exception as e:
-            logging.error('Failed to log in to %s: %s', p4port, e)
             return
 
         start_time = time.time()
