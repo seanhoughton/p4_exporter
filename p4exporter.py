@@ -33,8 +33,7 @@ class P4Collector(object):
     def connection(self, p4port):
         tid = threading.current_thread().ident
         if p4port not in self.p4_pool or tid not in self.p4_pool[p4port]:
-            p4 = P4()
-            p4.exception_level = 1
+            p4 = P4(exception_level=1, prog='prometheus-p4-metrics')
             hostname, port = p4port.split(':')
             credentials = self.config.get('credentials', {}).get(p4port, None)
             if credentials:
