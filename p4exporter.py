@@ -26,9 +26,9 @@ COMMAND_STATES = {
 
 class P4Collector(object):
 
-    def __init__(self):
-        self.params = {}
-        self.config = {}
+    def __init__(self, config, params):
+        self.params = params
+        self.config = config
 
     def connection(self, p4port):
         p4 = P4(exception_level=1, prog='prometheus-p4-metrics')
@@ -51,10 +51,10 @@ class P4Collector(object):
                 except Exception as e:
                     logging.error('Failed to log in to %s: %s', p4port, e)
                     credentials = None
-                return (p4, credentials is not None)
         except Exception as e:
             logging.error('Failed to connect to %s: %s', p4port, e)
             return (None, False)
+        return (p4, credentials is not None)
 
     def name(self, name):
         return 'p4_' + name
@@ -199,7 +199,7 @@ class P4Collector(object):
                 yield created_guage
 
             logging.debug('Disconnecting...')
-            p4.disconnect(). # explicitly disconnect
+            p4.disconnect()  # explicitly disconnect
 
 
 class ForkingHTTPServer(ForkingMixIn, HTTPServer):
@@ -217,9 +217,7 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
     def collect(self, params):
         with open(self._config_path, 'r') as f:
             config = yaml.safe_load(f)
-        collector = P4Collector()
-        collector.config = config
-        collector.params = params
+        collector = P4Collector(config, params)
         registry = CollectorRegistry()
         registry.register(collector)
         return generate_latest(registry)
