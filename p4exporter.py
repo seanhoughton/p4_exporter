@@ -225,7 +225,7 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         logging.info('Got request...')
         url = urlparse.urlparse(self.path)
-        if url.path == '/metrics':
+        if url.path == '/probe':
           params = urlparse.parse_qs(url.query)
           if 'target' not in params:
             self.send_response(400)
@@ -252,7 +252,7 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
           <head><title>P4 Exporter</title></head>
           <body>
           <h1>P4 Exporter</h1>
-          <p>Visit <code>/metrics?target=perforce:1666</code> to use.</p>
+          <p>Visit <code>/probe?target=perforce:1666</code> to use.</p>
           </body>
           </html>"""))
         else:
