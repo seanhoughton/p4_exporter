@@ -41,7 +41,7 @@ class P4Collector(object):
             logging.warning('No credentials for %s', p4port)
         p4.port = p4port
         try:
-            logging.info('Connecting to %s...', p4port)
+            logging.debug('Connecting to %s...', p4port)
             p4.connect()
             if credentials:
                 try:
