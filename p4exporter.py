@@ -3,15 +3,15 @@
 import os
 import yaml
 from argparse import ArgumentParser
-from prometheus_client import make_wsgi_app
-from wsgiref.simple_server import make_server, WSGIServer
-from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily, REGISTRY
+from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 import time
 import logging
-import threading
 from P4 import P4
 from collections import defaultdict
-from socketserver import ThreadingMixIn
+import urllib.parse as urlparse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ForkingMixIn
 
 
 COMMAND_STATES = {
@@ -26,13 +26,14 @@ COMMAND_STATES = {
 
 class P4Collector(object):
 
-    def __init__(self, config):
-        self.config = config
-        self.p4_pool = defaultdict(dict)
+    def __init__(self):
+        self.p4_pool = {}
+        self.params = {}
+        self.config = {}
 
     def connection(self, p4port):
         tid = threading.current_thread().ident
-        if p4port not in self.p4_pool or tid not in self.p4_pool[p4port]:
+        if p4port not in self.p4_pool:
             p4 = P4(exception_level=1, prog='prometheus-p4-metrics')
             hostname, port = p4port.split(':')
             credentials = self.config.get('credentials', {}).get(p4port, None)
@@ -53,13 +54,13 @@ class P4Collector(object):
                     except Exception as e:
                         logging.error('Failed to log in to %s: %s', p4port, e)
                         credentials = None
-                self.p4_pool[p4port][tid] = (p4, credentials is not None)
+                self.p4_pool[p4port] = (p4, credentials is not None)
             except Exception as e:
                 logging.error('Failed to connect to %s: %s', p4port, e)
                 return None, False
         else:
             logging.debug('Using cached connection for %s/%s', p4port, tid)
-        return self.p4_pool[p4port][tid]
+        return self.p4_pool[p4port]
 
     def name(self, name):
         return 'p4_' + name
@@ -157,7 +158,7 @@ class P4Collector(object):
             created_guage.add_metric([depot_name, depot_type], int(depot['time']))
         return size_guage, count_guage, created_guage
 
-    def collect(self, params):
+    def collect(self):
         if not params:
             return
         p4port = params['target'][0]
@@ -205,8 +206,62 @@ class P4Collector(object):
             yield created_guage
 
 
-class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
+class ForkingHTTPServer(ForkingMixIn, HTTPServer):
     pass
+
+
+class P4ExporterHandler(BaseHTTPRequestHandler):
+    def __init__(self, config_path, *args, **kwargs):
+        BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+        self._config_path = config_path
+        self._collector = P4Collector()
+        logging.info('New collector created')
+
+    def collect(self, config, params):
+        with open(self._config_path) as f:
+            config = yaml.safe_load(f)
+        self._collector.config = config
+        self._collector.params = params
+        registry = CollectorRegistry()
+        registry.register(self._collector)
+        return generate_latest(registry)
+
+    def do_GET(self):
+        logging.verbose('Got request...')
+        url = urlparse.urlparse(self.path)
+        if url.path == '/metrics':
+          params = urlparse.parse_qs(url.query)
+          if 'target' not in params:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write("Missing 'target' from parameters")
+            return
+
+          try:
+            output = self.collect()
+            self.send_response(200)
+            self.send_header('Content-Type', CONTENT_TYPE_LATEST)
+            self.end_headers()
+            self.wfile.write(output)
+          except Exception as e:
+            logging.error('Internal error: %s', e)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(traceback.format_exc())
+
+        elif url.path == '/':
+          self.send_response(200)
+          self.end_headers()
+          self.wfile.write("""<html>
+          <head><title>SNMP Exporter</title></head>
+          <body>
+          <h1>SNMP Exporter</h1>
+          <p>Visit <code>/metrics?address=1.2.3.4</code> to use.</p>
+          </body>
+          </html>""")
+        else:
+          self.send_response(404)
+          self.end_headers()
 
 
 if __name__ == '__main__':
@@ -216,15 +271,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--config', dest='config', default='/etc/p4_exporter/conf.yml', help='Path to the configuration file')
     options = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
-    logging.info('Creating collector...')
-    if os.path.isfile(options.config):
-        config = yaml.load(open(options.config, 'r'))
-    else:
-        logging.warning("Config file %s does not exist, no credentials loaded.", options.config)
-        config = {}
-    REGISTRY.register(P4Collector(config))
-    logging.info('Loaded %d credentials', len(config.get('credentials', [])))
+    handler = lambda *args, **kwargs: P4ExporterHandler(options.config, *args, **kwargs)
     logging.info('Listening on port :%d...', options.port)
-    app = make_wsgi_app()
-    httpd = make_server('', options.port, app, server_class=ThreadedWSGIServer)
-    httpd.serve_forever()
+    server = ForkingHTTPServer(('', options.port), handler)
+    server.serve_forever()

@@ -1,4 +1,3 @@
 p4python
 pyaml
-uwsgi
--e git+https://github.com/seanhoughton/client_python.git@feature/params#egg=prometheus_client
+prometheus_client
