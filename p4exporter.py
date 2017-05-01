@@ -4,7 +4,7 @@ import os
 import yaml
 from argparse import ArgumentParser
 from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 import time
 import logging
 from P4 import P4
@@ -12,6 +12,7 @@ from collections import defaultdict
 import urllib.parse as urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ForkingMixIn
+import traceback
 
 
 COMMAND_STATES = {
@@ -23,44 +24,37 @@ COMMAND_STATES = {
     'I': 'idle'
 }
 
-
 class P4Collector(object):
 
     def __init__(self):
-        self.p4_pool = {}
         self.params = {}
         self.config = {}
 
     def connection(self, p4port):
-        tid = threading.current_thread().ident
-        if p4port not in self.p4_pool:
-            p4 = P4(exception_level=1, prog='prometheus-p4-metrics')
-            hostname, port = p4port.split(':')
-            credentials = self.config.get('credentials', {}).get(p4port, None)
-            if credentials:
-                p4.user = credentials['username']
-                p4.password = credentials['password']
-            else:
-                logging.warning('No credentials for %s', p4port)
-            p4.port = p4port
-            try:
-                logging.info('Connecting to %s...', p4port)
-                p4.connect()
-                if credentials:
-                    try:
-                        logging.debug('Logging in as to "%s@%s"...', p4port, p4.user)
-                        p4.run_login()
-                        logging.debug('Conected and logged in.')
-                    except Exception as e:
-                        logging.error('Failed to log in to %s: %s', p4port, e)
-                        credentials = None
-                self.p4_pool[p4port] = (p4, credentials is not None)
-            except Exception as e:
-                logging.error('Failed to connect to %s: %s', p4port, e)
-                return None, False
+        p4 = P4(exception_level=1, prog='prometheus-p4-metrics')
+        hostname, port = p4port.split(':')
+        credentials = self.config.get('credentials', {}).get(p4port, None)
+        if credentials:
+            p4.user = credentials['username']
+            p4.password = credentials['password']
         else:
-            logging.debug('Using cached connection for %s/%s', p4port, tid)
-        return self.p4_pool[p4port]
+            logging.warning('No credentials for %s', p4port)
+        p4.port = p4port
+        try:
+            logging.info('Connecting to %s...', p4port)
+            p4.connect()
+            if credentials:
+                try:
+                    logging.debug('Logging in as to "%s@%s"...', p4port, p4.user)
+                    p4.run_login()
+                    logging.debug('Conected and logged in.')
+                except Exception as e:
+                    logging.error('Failed to log in to %s: %s', p4port, e)
+                    credentials = None
+                return (p4, credentials is not None)
+        except Exception as e:
+            logging.error('Failed to connect to %s: %s', p4port, e)
+            return (None, False)
 
     def name(self, name):
         return 'p4_' + name
@@ -159,51 +153,53 @@ class P4Collector(object):
         return size_guage, count_guage, created_guage
 
     def collect(self):
-        if not params:
-            return
-        p4port = params['target'][0]
+        p4port = self.params['target'][0]
         p4, is_logged_in = self.connection(p4port)
         if not p4:
             yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
             return
 
-        if not p4.connected():
-            try:
-                p4.connect()
-            except Exception as e:
-                logging.info('Failed to re-connect an existing connection')
-                yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
+        with p4:
+            if not p4.connected():
+                try:
+                    p4.connect()
+                except Exception as e:
+                    logging.info('Failed to re-connect an existing connection')
+                    yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
+                    return
+
+            yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
+
+            if not is_logged_in:
                 return
 
-        yield GaugeMetricFamily(self.name('up'), 'Server is up', value=1)
+            start_time = time.time()
+            info = p4.run_info()[0]
+            info_time = time.time() - start_time
+            yield GaugeMetricFamily(self.name('response_time'), 'Seconds to get p4 info', value=info_time)
+            yield self.uptime(info)
 
-        if not is_logged_in:
-            return
+            yield from self.monitor(p4)
+            yield self.changelist(p4)
 
-        start_time = time.time()
-        info = p4.run_info()[0]
-        info_time = time.time() - start_time
-        yield GaugeMetricFamily(self.name('response_time'), 'Seconds to get p4 info', value=info_time)
-        yield self.uptime(info)
+            extra_collectors = set(self.params['collectors'][0].split(',')) if 'collectors' in self.params else set()
+            if 'replication' in extra_collectors:
+                if info['serverServices'] in ('replica', 'forwarding-replica', 'edge-server'):
+                    yield from self.journal_replication(p4)
+                if 'lbr.replication' in info and info['lbr.replication'] != 'shared':
+                    yield from self.file_replication(p4)
+            if 'workspaces' in extra_collectors:
+                yield self.workspaces(p4)
+            if 'users' in extra_collectors:
+                yield self.users(p4)
+            if 'depots' in extra_collectors:
+                depot_sizes, depot_counts, created_guage = self.depot_guages(p4)
+                yield depot_sizes
+                yield depot_counts
+                yield created_guage
 
-        yield from self.monitor(p4)
-        yield self.changelist(p4)
-
-        extra_collectors = set(params['collectors'][0].split(',')) if 'collectors' in params else set()
-        if 'replication' in extra_collectors:
-            if info['serverServices'] in ('replica', 'forwarding-replica', 'edge-server'):
-                yield from self.journal_replication(p4)
-            if 'lbr.replication' in info and info['lbr.replication'] != 'shared':
-                yield from self.file_replication(p4)
-        if 'workspaces' in extra_collectors:
-            yield self.workspaces(p4)
-        if 'users' in extra_collectors:
-            yield self.users(p4)
-        if 'depots' in extra_collectors:
-            depot_sizes, depot_counts, created_guage = self.depot_guages(p4)
-            yield depot_sizes
-            yield depot_counts
-            yield created_guage
+            logging.debug('Disconnecting...')
+            p4.disconnect(). # explicitly disconnect
 
 
 class ForkingHTTPServer(ForkingMixIn, HTTPServer):
@@ -212,22 +208,24 @@ class ForkingHTTPServer(ForkingMixIn, HTTPServer):
 
 class P4ExporterHandler(BaseHTTPRequestHandler):
     def __init__(self, config_path, *args, **kwargs):
-        BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
         self._config_path = config_path
-        self._collector = P4Collector()
-        logging.info('New collector created')
+        try:
+            BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+        except Exception as e:
+            logging.exception('Failed to handle request: %s', e)
 
-    def collect(self, config, params):
-        with open(self._config_path) as f:
+    def collect(self, params):
+        with open(self._config_path, 'r') as f:
             config = yaml.safe_load(f)
-        self._collector.config = config
-        self._collector.params = params
+        collector = P4Collector()
+        collector.config = config
+        collector.params = params
         registry = CollectorRegistry()
-        registry.register(self._collector)
+        registry.register(collector)
         return generate_latest(registry)
 
     def do_GET(self):
-        logging.verbose('Got request...')
+        logging.info('Got request...')
         url = urlparse.urlparse(self.path)
         if url.path == '/metrics':
           params = urlparse.parse_qs(url.query)
@@ -238,7 +236,7 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
             return
 
           try:
-            output = self.collect()
+            output = self.collect(params)
             self.send_response(200)
             self.send_header('Content-Type', CONTENT_TYPE_LATEST)
             self.end_headers()
@@ -252,13 +250,13 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
         elif url.path == '/':
           self.send_response(200)
           self.end_headers()
-          self.wfile.write("""<html>
-          <head><title>SNMP Exporter</title></head>
+          self.wfile.write(str.encode("""<html>
+          <head><title>P4 Exporter</title></head>
           <body>
-          <h1>SNMP Exporter</h1>
-          <p>Visit <code>/metrics?address=1.2.3.4</code> to use.</p>
+          <h1>P4 Exporter</h1>
+          <p>Visit <code>/metrics?target=perforce:1666</code> to use.</p>
           </body>
-          </html>""")
+          </html>"""))
         else:
           self.send_response(404)
           self.end_headers()
@@ -271,7 +269,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--config', dest='config', default='/etc/p4_exporter/conf.yml', help='Path to the configuration file')
     options = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
-    handler = lambda *args, **kwargs: P4ExporterHandler(options.config, *args, **kwargs)
     logging.info('Listening on port :%d...', options.port)
+    handler = lambda *args, **kwargs: P4ExporterHandler(options.config, *args, **kwargs)
     server = ForkingHTTPServer(('', options.port), handler)
     server.serve_forever()

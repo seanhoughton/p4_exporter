@@ -1,4 +1,4 @@
-FROM        python:3.3
+FROM        python:3.6
 MAINTAINER  Sean Houghton <sean.houghton@activision.com>
 
 COPY        requirements.txt /tmp/requirements.txt
