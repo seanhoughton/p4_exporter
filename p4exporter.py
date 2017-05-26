@@ -1,19 +1,18 @@
 #!/usr/bin/env python
 
-import os
 import yaml
+import signal
 from argparse import ArgumentParser
 from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily
 from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 import time
 import logging
 from P4 import P4
-from collections import defaultdict
 import urllib.parse as urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ForkingMixIn
-import traceback
 
+TIMEOUT = 10
 
 COMMAND_STATES = {
     'R': 'running',
@@ -24,11 +23,14 @@ COMMAND_STATES = {
     'I': 'idle'
 }
 
+
 class P4Collector(object):
 
     def __init__(self, config, params):
         self.params = params
         self.config = config
+        p4port = self.params['target'][0]
+        self.log = logging.getLogger(p4port)
 
     def connection(self, p4port):
         p4 = P4(exception_level=1, prog='prometheus-p4-metrics')
@@ -38,21 +40,21 @@ class P4Collector(object):
             p4.user = credentials['username']
             p4.password = credentials['password']
         else:
-            logging.warning('No credentials for %s', p4port)
+            self.log.warning('No credentials for %s', p4port)
         p4.port = p4port
         try:
-            logging.debug('Connecting to %s...', p4port)
+            self.log.debug('Connecting...')
             p4.connect()
             if credentials:
                 try:
-                    logging.debug('Logging in as to "%s@%s"...', p4port, p4.user)
+                    self.log.debug('Logging in as "%s"...', p4.user)
                     p4.run_login()
-                    logging.debug('Conected and logged in.')
+                    self.log.debug('Conected and logged in.')
                 except Exception as e:
-                    logging.error('Failed to log in to %s: %s', p4port, e)
+                    self.log.error('Failed to log in: %s', e)
                     credentials = None
         except Exception as e:
-            logging.error('Failed to connect to %s: %s', p4port, e)
+            self.log.error('Failed to connect: %s', e)
             return (None, False)
         return (p4, credentials is not None)
 
@@ -70,7 +72,7 @@ class P4Collector(object):
         def time_to_seconds(time_string):
             h, m, s = time_string.split(':')
             return int(h) * 3600 + int(m) * 60 + int(s)
-        logging.debug('Inspecting processes')
+        self.log.debug('Inspecting processes')
         try:
             commands = p4.run_monitor('show')
             for code, state in COMMAND_STATES.items():
@@ -93,25 +95,25 @@ class P4Collector(object):
                                             documentation='Average time for commands in the {} state'.format(state),
                                             value=float(sum(times)) / float(len(times)))
         except Exception as e:
-            logging.error('Failed to get monitor stats: %s', e)
+            self.log.error('Failed to get monitor stats: %s', e)
 
     def changelist(self, p4):
-        logging.debug('Inspecting changelist...')
+        self.log.debug('Inspecting changelist...')
         changelist = p4.run_counter('change')[0]
         return GaugeMetricFamily(self.name('changelist'), 'Current head changelist', value=int(changelist['value']))
 
     def workspaces(self, p4):
-        logging.debug('Inspecting workspaces...')
+        self.log.debug('Inspecting workspaces...')
         clients = p4.run_clients()
         return GaugeMetricFamily(self.name('workspaces'), 'Number of active workspaces', value=len(clients))
 
     def users(self, p4):
-        logging.debug('Inspecting users...')
+        self.log.debug('Inspecting users...')
         users = p4.run_users()
         return GaugeMetricFamily(self.name('users'), 'Number of active users', value=len(users))
 
     def journal_replication(self, p4):
-        logging.debug('Inspecting journal replication...')
+        self.log.debug('Inspecting journal replication...')
         try:
             pull = p4.run_pull('-lj').pop()
             yield CounterMetricFamily(self.name('pull_replica_journal_sequence'), 'Replica journal sequence', value=float(pull['replicaJournalSequence']))
@@ -122,10 +124,10 @@ class P4Collector(object):
             yield CounterMetricFamily(self.name('pull_replica_time'), 'Replica Timestamp', value=float(pull['replicaTime']))
             yield CounterMetricFamily(self.name('pull_replica_statefile_modified'), 'Replica statefile modified timestamp', value=float(pull['replicaStatefileModified']))
         except Exception as e:
-            logging.error('Failed to get journal replication stats: %s', e)
+            self.log.error('Failed to get journal replication stats: %s', e)
 
     def file_replication(self, p4):
-        logging.debug('Inspecting file replication...')
+        self.log.debug('Inspecting file replication...')
         try:
             pull = p4.run_pull('-l', '-s').pop()
             yield GaugeMetricFamily(self.name('pull_replica_transfers_active'), 'Replica file transfers active', value=float(pull['replicaTransfersActive']))
@@ -134,10 +136,10 @@ class P4Collector(object):
             yield GaugeMetricFamily(self.name('pull_replica_bytes_total'), 'Replica bytes total', value=float(pull['replicaBytesTotal']))
             yield CounterMetricFamily(self.name('pull_replica_oldest_change'), 'Replica oldest change', value=float(pull['replicaOldestChange']))
         except Exception as e:
-            logging.error('Failed to get file replication stats: %s', e)
+            self.log.error('Failed to get file replication stats: %s', e)
 
     def depot_guages(self, p4):
-        logging.debug('Inspecting depots...')
+        self.log.debug('Inspecting depots...')
         size_guage = GaugeMetricFamily(self.name('depot_size'), 'Size of a depot in bytes', labels=['depot', 'type'])
         count_guage = GaugeMetricFamily(self.name('depot_files'), 'Number of files in a depot', labels=['depot', 'type'])
         created_guage = GaugeMetricFamily(self.name('depot_created'), 'Creation time of the depot', labels=['depot', 'type'])
@@ -145,7 +147,7 @@ class P4Collector(object):
         for depot in depots:
             depot_name = depot['name']
             depot_type = depot['type']
-            logging.debug('Inspecting depot %s...', depot_name)
+            self.log.debug('Inspecting depot %s...', depot_name)
             size_info = p4.run_sizes('-a', '-z', '//{}/...'.format(depot_name))[0]
             size_guage.add_metric([depot_name, depot_type], int(size_info['fileSize']))
             count_guage.add_metric([depot_name, depot_type], int(size_info['fileCount']))
@@ -164,7 +166,7 @@ class P4Collector(object):
                 try:
                     p4.connect()
                 except Exception as e:
-                    logging.info('Failed to re-connect an existing connection')
+                    self.log.info('Failed to re-connect an existing connection')
                     yield GaugeMetricFamily(self.name('up'), 'Server is up', value=0)
                     return
 
@@ -198,7 +200,7 @@ class P4Collector(object):
                 yield depot_counts
                 yield created_guage
 
-            logging.debug('Disconnecting...')
+            self.log.debug('Disconnecting...')
             p4.disconnect()  # explicitly disconnect
 
 
@@ -206,7 +208,31 @@ class ForkingHTTPServer(ForkingMixIn, HTTPServer):
     pass
 
 
+class TimeoutError(Exception):
+    pass
+
+
+def timeout(seconds_before_timeout):
+    def decorate(f):
+        def handler(signum, frame):
+            raise TimeoutError()
+
+        def new_f(*args, **kwargs):
+            old = signal.signal(signal.SIGALRM, handler)
+            signal.alarm(seconds_before_timeout)
+            try:
+                result = f(*args, **kwargs)
+            finally:
+                signal.signal(signal.SIGALRM, old)
+            signal.alarm(0)
+            return result
+        new_f.__name__ = f.__name__
+        return new_f
+    return decorate
+
+
 class P4ExporterHandler(BaseHTTPRequestHandler):
+
     def __init__(self, config_path, *args, **kwargs):
         self._config_path = config_path
         try:
@@ -214,6 +240,7 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logging.exception('Failed to handle request: %s', e)
 
+    @timeout(TIMEOUT)
     def collect(self, params):
         with open(self._config_path, 'r') as f:
             config = yaml.safe_load(f)
@@ -226,38 +253,43 @@ class P4ExporterHandler(BaseHTTPRequestHandler):
         logging.info('Got request...')
         url = urlparse.urlparse(self.path)
         if url.path == '/probe':
-          params = urlparse.parse_qs(url.query)
-          if 'target' not in params:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write("Missing 'target' from parameters")
-            return
+            params = urlparse.parse_qs(url.query)
+            if 'target' not in params:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write("Missing 'target' from parameters")
+                return
 
-          try:
-            output = self.collect(params)
-            self.send_response(200)
-            self.send_header('Content-Type', CONTENT_TYPE_LATEST)
-            self.end_headers()
-            self.wfile.write(output)
-          except Exception as e:
-            logging.error('Internal error: %s', e)
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(traceback.format_exc())
+            try:
+                output = self.collect(params)
+                self.send_response(200)
+                self.send_header('Content-Type', CONTENT_TYPE_LATEST)
+                self.end_headers()
+                self.wfile.write(output)
+            except TimeoutError:
+                logging.error('Collection timed out')
+                self.send_response(408)
+                self.end_headers()
+                # self.wfile.write(traceback.format_exc())
+            except Exception as e:
+                logging.error('Internal error: %s', e)
+                self.send_response(500)
+                self.end_headers()
+                # self.wfile.write(traceback.format_exc())
 
         elif url.path == '/':
-          self.send_response(200)
-          self.end_headers()
-          self.wfile.write(str.encode("""<html>
-          <head><title>P4 Exporter</title></head>
-          <body>
-          <h1>P4 Exporter</h1>
-          <p>Visit <code>/probe?target=perforce:1666</code> to use.</p>
-          </body>
-          </html>"""))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(str.encode("""<html>
+            <head><title>P4 Exporter</title></head>
+            <body>
+            <h1>P4 Exporter</h1>
+            <p>Visit <code>/probe?target=perforce:1666</code> to use.</p>
+            </body>
+            </html>"""))
         else:
-          self.send_response(404)
-          self.end_headers()
+            self.send_response(404)
+            self.end_headers()
 
 
 if __name__ == '__main__':
@@ -266,7 +298,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--port', dest='port', type=int, default=9666, help='The port to expose metrics on, default: 9666')
     parser.add_argument('-c', '--config', dest='config', default='/etc/p4_exporter/conf.yml', help='Path to the configuration file')
     options = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(message)s')
+    logging.basicConfig(level=logging.DEBUG if options.verbose else logging.INFO, format='[%(levelname)s] %(name)s %(message)s')
     logging.info('Listening on port :%d...', options.port)
     handler = lambda *args, **kwargs: P4ExporterHandler(options.config, *args, **kwargs)
     server = ForkingHTTPServer(('', options.port), handler)
