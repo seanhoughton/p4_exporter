@@ -186,7 +186,7 @@ class P4Collector(object):
 
             extra_collectors = set(self.params['collectors'][0].split(',')) if 'collectors' in self.params else set()
             if 'replication' in extra_collectors:
-                if info['serverServices'] in ('replica', 'forwarding-replica', 'edge-server'):
+                if info['serverServices'] in ('replica', 'forwarding-replica', 'standby', 'forwarding-standby', 'edge-server'):
                     yield from self.journal_replication(p4)
                 if 'lbr.replication' in info and info['lbr.replication'] != 'shared':
                     yield from self.file_replication(p4)
