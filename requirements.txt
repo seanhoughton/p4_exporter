@@ -1,3 +1,4 @@
 p4python
-pyaml
 prometheus_client
+aiohttp
+git+https://ct-bitbucket.activision.com/scm/p4/aiop4.git

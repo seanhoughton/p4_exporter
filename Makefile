@@ -1,14 +1,29 @@
-NAME=seanhoughton/p4-exporter
-TAG=latest
+IMAGENAME=ct-registry.activision.com/perforce/p4-exporter
+DOCKER_LABEL?=test
+TAG=$(DOCKER_LABEL)
 
-.PHONY: image dev
+
+exporter: image
+	docker-compose up -d
+	docker-compose logs -f
+
+stop:
+	docker-compose down
 
 image:
-	docker build -t $(NAME):$(TAG) .
+	docker build -t $(IMAGENAME):$(TAG) .
 
-dev:
-	-docker stop p4-exporter
-	docker run --name p4-exporter -d --rm -p 9667:9666 -v $(CURDIR):/local -w /local --entrypoint "python" $(NAME):$(TAG) p4exporter.py --config=/local/config.yml --verbose
-	docker logs -f p4-exporter
+push:
+	docker push $(IMAGENAME):$(TAG)
 
-default: image
+login:
+	docker login -u $(REG_USERNAME) -p $(REG_PASSWORD) ct-registry.activision.com
+
+test:
+	@echo "No tests configured"
+
+jenkins_test: image test
+
+jenkins_test_integration: jenkins_test
+
+jenkins_publish: image test login push
