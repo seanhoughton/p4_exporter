@@ -28,14 +28,15 @@ COLLECTION_TIMEOUT = 15
 
 class P4Collector(object):
 
-    def __init__(self, port, user, collectors):
+    def __init__(self, port, user, password, collectors):
         self.port = port
         self.user = user
+        self.password = password
         self.collectors = collectors
 
         self.collected_ports = set()
 
-        self.up_guage = GaugeMetricFamily('p4_up', 'Server is up', labels=['server_id'])
+        self.up_gauge = GaugeMetricFamily('p4_up', 'Server is up', labels=['server_id'])
         self.alive_guage = GaugeMetricFamily('p4_alive', 'Server is actively replicating', labels=['server_id'])
         self.uptime_counter = CounterMetricFamily('p4_uptime', 'Uptime in seconds for the server process', labels=['server_id'])
         self.response_time_guage = GaugeMetricFamily('p4_response_time', 'Seconds to get p4 info', labels=['server_id'])
@@ -185,15 +186,16 @@ class P4Collector(object):
 
             log.info('Starting collection...')
             try:
-                p4 = P4(port=port, user=self.user, exception_level=1, prog='prometheus-p4-metrics')
+                p4 = P4(port=port, user=self.user, password=self.password, exception_level=1, prog='prometheus-p4-metrics')
                 start_time = time.time()
                 info, = await p4.run_info()
                 info_time = time.time() - start_time
             except Exception as e:
                 self.up_gauge.add_metric([server_id], 0)
+                log.error('Failed to connect')
                 return
 
-            self.up_guage.add_metric([server_id], 1)
+            self.up_gauge.add_metric([server_id], 1)
             self.response_time_guage.add_metric([server_id], info_time)
             self.uptime(info, server_id)
 
@@ -236,13 +238,16 @@ class P4Collector(object):
   
 
     async def collect(self):
-        p4 = P4(port=self.port, user=self.user, exception_level=1, prog='prometheus-p4-metrics')
-        info, = await p4.run_info()
-        if info['serverServices'] != 'commit-server':
-            logging.error('Target must be a commit server')
-            return
+        try:
+            p4 = P4(port=self.port, user=self.user, password=self.password, exception_level=1, prog='prometheus-p4-metrics')
+            info, = await p4.run_info()
+            if info['serverServices'] != 'commit-server':
+                logging.error('Target must be a commit server')
+                return
 
-        await p4.run_login()
+            await p4.run_login()
+        except Exception as e:
+            logging.error('Failed to log in to %s as %s: %s', self.port, self.user, e)
 
         # Build a list of servers and a map from serverid to p4port
         id_to_addr = {server['ServerID']: server['ExternalAddress'] for server in await p4.run_servers() if 'ExternalAddress' in server}
@@ -266,9 +271,9 @@ class RegistryWrapper(object):
         return self.metrics
 
 
-async def handle(port, user, collectors, request):
+async def handle(port, user, password, collectors, request):
     logging.info('Got request...')
-    collector = P4Collector(port, user, collectors)
+    collector = P4Collector(port, user, password, collectors)
     metrics = []
     try:
         async for metric in collector.collect():
@@ -296,7 +301,7 @@ def run(options):
     if options.debug:
         enable_debug()
     app = web.Application()
-    handler = partial(handle, options.p4port, options.p4user, options.collectors.split(','))
+    handler = partial(handle, options.p4port, options.p4user, options.p4passwd, options.collectors.split(','))
     app.router.add_get('/metrics', handler)
     web.run_app(app, port=options.port)
 

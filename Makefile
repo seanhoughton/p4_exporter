@@ -1,7 +1,10 @@
 IMAGENAME=ct-registry.activision.com/perforce/p4-exporter
 DOCKER_LABEL?=test
 TAG=$(DOCKER_LABEL)
+include .env
 
+debug:
+	.venv/bin/python p4exporter.py --p4port "${P4PORT}" --p4user "${P4USER}" --p4passwd "${P4PASSWD}" --debug
 
 exporter: image
 	docker-compose up -d
