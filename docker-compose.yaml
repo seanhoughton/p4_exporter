@@ -3,9 +3,11 @@ version: '2'
 services:
   p4exporter:
     image: ct-registry.activision.com/perforce/p4-exporter:test
+    command: --debug
     environment:
       - P4PORT=${P4PORT}
       - P4USER=${P4USER}
       - P4PASSWD=${P4PASSWD}
     ports:
       - '9666:9666'
+      - '3500:3500'
